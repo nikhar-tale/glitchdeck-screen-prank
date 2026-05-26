@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -10,11 +11,16 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
+  static const _accessibilityChannel = MethodChannel('com.prank.screen/accessibility');
+
   // Prank state variables
   bool _crackEnabled = true;
   bool _greenLinesEnabled = true;
   bool _flickerEnabled = true;
   bool _deadPixelsEnabled = true;
+
+  // Mode state
+  bool _advancedMode = false; // False = Standard, True = Accessibility (locks & quick settings persistent)
 
   // System states
   bool _permissionGranted = false;
@@ -46,23 +52,43 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Re-verify permission status when returning to the app from the settings screen
+      // Re-verify permission status when returning to the app
       _checkPermissionAndState();
     }
   }
 
   Future<void> _checkPermissionAndState() async {
-    final granted = await FlutterOverlayWindow.isPermissionGranted();
-    final active = await FlutterOverlayWindow.isActive();
-    setState(() {
-      _permissionGranted = granted;
-      _overlayActive = active;
-    });
+    try {
+      if (_advancedMode) {
+        final enabled = await _accessibilityChannel.invokeMethod<bool>('isAccessibilityEnabled') ?? false;
+        final active = await _accessibilityChannel.invokeMethod<bool>('isOverlayActive') ?? false;
+        setState(() {
+          _permissionGranted = enabled;
+          _overlayActive = active;
+        });
+      } else {
+        final granted = await FlutterOverlayWindow.isPermissionGranted();
+        final active = await FlutterOverlayWindow.isActive();
+        setState(() {
+          _permissionGranted = granted;
+          _overlayActive = active;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error checking permission/state: $e");
+    }
   }
 
   Future<void> _requestPermission() async {
-    await FlutterOverlayWindow.requestPermission();
-    // Re-check after returning from settings screen (this might complete instantly, but didChangeAppLifecycleState will catch the actual resume)
+    try {
+      if (_advancedMode) {
+        await _accessibilityChannel.invokeMethod('openAccessibilitySettings');
+      } else {
+        await FlutterOverlayWindow.requestPermission();
+      }
+    } catch (e) {
+      debugPrint("Error requesting permission: $e");
+    }
     await _checkPermissionAndState();
   }
 
@@ -77,18 +103,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   void _startPrankWorkflow() async {
     // 1. Re-verify the permission status dynamically right now
-    final currentlyGranted = await FlutterOverlayWindow.isPermissionGranted();
-    if (currentlyGranted != _permissionGranted) {
-      setState(() {
-        _permissionGranted = currentlyGranted;
-      });
-    }
+    await _checkPermissionAndState();
 
-    if (!currentlyGranted) {
+    if (!_permissionGranted) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please grant the 'Draw over other apps' permission first."),
+        SnackBar(
+          content: Text(_advancedMode 
+            ? "Please enable the Accessibility Service for 'screen_prank_app' first." 
+            : "Please grant the 'Draw over other apps' permission first."),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -121,22 +144,37 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _launchOverlay() async {
     try {
-      final active = await FlutterOverlayWindow.isActive();
-      if (!active) {
-        await FlutterOverlayWindow.showOverlay(
-          enableDrag: false,
-          flag: OverlayFlag.clickThrough, // Pass touch events directly through
-          overlayTitle: "System Integrity Compromised",
-          overlayContent: "Fatal visual rendering pipeline failure",
-          visibility: NotificationVisibility.visibilityPublic,
-          height: -1999,
-          width: WindowSize.matchParent,
-        );
-        setState(() {
-          _overlayActive = true;
-        });
-        // Sync our configuration parameters immediately
-        _syncConfigToOverlay();
+      if (_advancedMode) {
+        final active = await _accessibilityChannel.invokeMethod<bool>('isOverlayActive') ?? false;
+        if (!active) {
+          await _accessibilityChannel.invokeMethod('startAccessibilityOverlay', {
+            'crack': _crackEnabled,
+            'greenLines': _greenLinesEnabled,
+            'flicker': _flickerEnabled,
+            'deadPixels': _deadPixelsEnabled,
+          });
+          setState(() {
+            _overlayActive = true;
+          });
+        }
+      } else {
+        final active = await FlutterOverlayWindow.isActive();
+        if (!active) {
+          await FlutterOverlayWindow.showOverlay(
+            enableDrag: false,
+            flag: OverlayFlag.clickThrough, // Pass touch events directly through
+            overlayTitle: "System Integrity Compromised",
+            overlayContent: "Fatal visual rendering pipeline failure",
+            visibility: NotificationVisibility.visibilityPublic,
+            height: -1999,
+            width: WindowSize.matchParent,
+          );
+          setState(() {
+            _overlayActive = true;
+          });
+          // Sync our configuration parameters immediately
+          _syncConfigToOverlay();
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -148,8 +186,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _stopPrank() async {
     _countdownTimer?.cancel();
-    if (await FlutterOverlayWindow.isActive()) {
-      await FlutterOverlayWindow.closeOverlay();
+    try {
+      if (_advancedMode) {
+        await _accessibilityChannel.invokeMethod('stopAccessibilityOverlay');
+      } else {
+        if (await FlutterOverlayWindow.isActive()) {
+          await FlutterOverlayWindow.closeOverlay();
+        }
+      }
+    } catch (e) {
+      debugPrint("Error stopping overlay: $e");
     }
     setState(() {
       _overlayActive = false;
@@ -186,27 +232,29 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "SCREEN PRANK",
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w900,
-                          color: textLight,
-                          letterSpacing: 2.0,
-                          shadows: [
-                            Shadow(color: neonPink.withOpacity(0.5), offset: const Offset(2, 2), blurRadius: 4),
-                          ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "SCREEN PRANK",
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            color: textLight,
+                            letterSpacing: 2.0,
+                            shadows: [
+                              Shadow(color: neonPink.withOpacity(0.5), offset: const Offset(2, 2), blurRadius: 4),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        "OLED Damage Simulator (MVP)",
-                        style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 0.5),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        const Text(
+                          "OLED Damage Simulator (Advanced)",
+                          style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 0.5),
+                        ),
+                      ],
+                    ),
                   ),
                   Icon(
                     Icons.bug_report_outlined,
@@ -216,7 +264,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 ],
               ),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
 
               // Overlay Active Status Panel
               Container(
@@ -260,7 +308,80 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 ),
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+
+              // Prank Mode Toggle
+              Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        if (_overlayActive) return;
+                        setState(() {
+                          _advancedMode = false;
+                        });
+                        _checkPermissionAndState();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: !_advancedMode ? neonPink.withOpacity(0.15) : cardBg.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: !_advancedMode ? neonPink : Colors.transparent,
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            "STANDARD MODE",
+                            style: TextStyle(
+                              color: !_advancedMode ? neonPink : Colors.white60,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        if (_overlayActive) return;
+                        setState(() {
+                          _advancedMode = true;
+                        });
+                        _checkPermissionAndState();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: _advancedMode ? neonGreen.withOpacity(0.15) : cardBg.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _advancedMode ? neonGreen : Colors.transparent,
+                            width: 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            "ADVANCED MODE",
+                            style: TextStyle(
+                              color: _advancedMode ? neonGreen : Colors.white60,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
 
               // Countdown display if counting down
               if (_isCountingDown)
@@ -404,14 +525,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                       ),
                       child: Column(
                         children: [
-                          const Row(
+                          Row(
                             children: [
-                              Icon(Icons.warning_amber_rounded, color: Colors.amberAccent, size: 20),
-                              SizedBox(width: 12),
+                              const Icon(Icons.warning_amber_rounded, color: Colors.amberAccent, size: 20),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  "Overlay permission is required to draw the glitch over other apps.",
-                                  style: TextStyle(color: Colors.amber, fontSize: 12),
+                                  _advancedMode
+                                      ? "Accessibility service permission is required to persistent overlay (draws over Quick Settings and Lock Screen)."
+                                      : "Overlay permission is required to draw the glitch over other apps.",
+                                  style: const TextStyle(color: Colors.amber, fontSize: 12),
                                 ),
                               ),
                             ],
@@ -424,9 +547,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                               minimumSize: const Size.fromHeight(40),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
-                            child: const Text(
-                              "GRANT PERMISSION",
-                              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
+                            child: Text(
+                              _advancedMode ? "ENABLE ACCESSIBILITY" : "GRANT PERMISSION",
+                              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
                             ),
                           ),
                         ],
@@ -452,7 +575,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     icon: const Icon(Icons.play_arrow, color: Colors.black),
                     label: const Text("ACTIVATE PRANK", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: neonGreen,
+                      backgroundColor: _advancedMode ? neonGreen : neonPink,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
