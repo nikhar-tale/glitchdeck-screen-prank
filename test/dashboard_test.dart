@@ -162,5 +162,118 @@ void main() {
 
     // Verify stopAccessibilityOverlay is called
     expect(accessibilityChannelCalls.any((call) => call.method == 'stopAccessibilityOverlay'), isTrue);
+
+    // ==========================================
+    // PART 3: Advanced Test Cases (Toggles, Countdown, and Cancel)
+    // ==========================================
+
+    // 1. Test Switch toggles state updates and configurations propagation
+    accessibilityChannelCalls.clear();
+
+    // Find and toggle off "OLED Crack & Ink Bleed"
+    final crackSwitchRow = find.ancestor(
+      of: find.text('OLED Crack & Ink Bleed'),
+      matching: find.byType(Row),
+    );
+    final crackSwitch = find.descendant(
+      of: crackSwitchRow,
+      matching: find.byType(Switch),
+    );
+    await tester.tap(crackSwitch);
+    await tester.pumpAndSettle();
+
+    // Find and toggle off "Green OLED Lines"
+    final greenLinesSwitchRow = find.ancestor(
+      of: find.text('Green OLED Lines'),
+      matching: find.byType(Row),
+    );
+    final greenLinesSwitch = find.descendant(
+      of: greenLinesSwitchRow,
+      matching: find.byType(Switch),
+    );
+    await tester.tap(greenLinesSwitch);
+    await tester.pumpAndSettle();
+
+    // Tap ACTIVATE PRANK in Advanced Mode with toggled settings
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    // Verify startAccessibilityOverlay is called with crack: false and greenLines: false
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isTrue);
+    final customStartCall = accessibilityChannelCalls.firstWhere((call) => call.method == 'startAccessibilityOverlay');
+    expect(customStartCall.arguments['crack'], isFalse);
+    expect(customStartCall.arguments['greenLines'], isFalse);
+    expect(customStartCall.arguments['flicker'], isTrue);
+    expect(customStartCall.arguments['deadPixels'], isTrue);
+
+    // Tap STOP PRANK
+    await tester.tap(find.text('STOP PRANK'));
+    await tester.pumpAndSettle();
+
+    // Toggle them back on to restore defaults for the next test steps
+    await tester.tap(crackSwitch);
+    await tester.pumpAndSettle();
+    await tester.tap(greenLinesSwitch);
+    await tester.pumpAndSettle();
+
+    // 2. Test Countdown delay timer ticking sequentially
+    // Select "3 Seconds Delay" from dropdown
+    await tester.tap(find.text('Instant (Activate Now)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3 Seconds Delay').last);
+    await tester.pumpAndSettle();
+    expect(find.text('3 Seconds Delay'), findsOneWidget);
+
+    accessibilityChannelCalls.clear();
+
+    // Tap ACTIVATE PRANK
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump(); // Advance to start the countdown
+
+    // Verify countdown UI shows 3 seconds remaining and overlay not active
+    expect(find.text('Prank starts in: 3'), findsOneWidget);
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
+
+    // Pump 1 second -> 2 seconds remaining
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Prank starts in: 2'), findsOneWidget);
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
+
+    // Pump 1 second -> 1 second remaining
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Prank starts in: 1'), findsOneWidget);
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
+
+    // Pump 1 second -> Countdown finished, overlay should launch
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isTrue);
+    expect(find.text('STOP PRANK'), findsOneWidget);
+
+    // Tap STOP PRANK
+    await tester.tap(find.text('STOP PRANK'));
+    await tester.pumpAndSettle();
+
+    // 3. Test Cancelling active countdown timer
+    accessibilityChannelCalls.clear();
+
+    // Tap ACTIVATE PRANK (starts countdown with the selected 3 seconds delay)
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump();
+
+    expect(find.text('Prank starts in: 3'), findsOneWidget);
+
+    // Pump 1 second -> 2 seconds remaining
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Prank starts in: 2'), findsOneWidget);
+
+    // Tap CANCEL TIMER
+    await tester.tap(find.text('CANCEL TIMER'));
+    await tester.pumpAndSettle();
+
+    // Verify timer is canceled, UI returns to main controls, and overlay is not shown
+    expect(find.textContaining('Prank starts in'), findsNothing);
+    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
+    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
   });
 }
