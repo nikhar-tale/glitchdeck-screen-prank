@@ -47,7 +47,11 @@ From **GLITCHDECK**, you can configure and execute high-fidelity visual overlays
 
 ## 🎬 Video Demonstration
 
-![](assets/demo.mp4)
+
+
+https://github.com/user-attachments/assets/9f677848-cd18-4da3-9d0e-2957ca3f6735
+
+
 
 ### Demo Flow:
 1. **Calibration Test**: Open the app. Run the touch grid test and start the sweep stress test.
