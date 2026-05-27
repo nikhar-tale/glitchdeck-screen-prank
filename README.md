@@ -47,6 +47,8 @@ From **GLITCHDECK**, you can configure and execute high-fidelity visual overlays
 
 ## 🎬 Video Demonstration
 
+<video src="assets/demo.mp4" width="320" controls></video>
+
 ### Demo Flow:
 1. **Calibration Test**: Open the app. Run the touch grid test and start the sweep stress test.
 2. **Stealth Unlock**: Tap the title **5 times** to trigger physical haptic vibrations and slide open **GLITCHDECK**.
