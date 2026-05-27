@@ -12,7 +12,6 @@ class PrankOverlayWidget extends StatefulWidget {
 
 class _PrankOverlayWidgetState extends State<PrankOverlayWidget> with TickerProviderStateMixin {
   // Configurable options
-  bool showCrack = true;
   bool showGreenLines = true;
   bool showFlicker = true;
   bool showDeadPixels = true;
@@ -55,7 +54,6 @@ class _PrankOverlayWidgetState extends State<PrankOverlayWidget> with TickerProv
     _listenerSubscription = FlutterOverlayWindow.overlayListener.listen((event) {
       if (event is Map) {
         setState(() {
-          showCrack = event['crack'] ?? true;
           showGreenLines = event['greenLines'] ?? true;
           showFlicker = event['flicker'] ?? true;
           showDeadPixels = event['deadPixels'] ?? true;
@@ -90,12 +88,27 @@ class _PrankOverlayWidgetState extends State<PrankOverlayWidget> with TickerProv
     }
   }
 
+  int _tapCount = 0;
+  Timer? _tapResetTimer;
+
+  void _dismissOverlay() async {
+    try {
+      // 1. Tell the main app to close accessibility overlay if advanced mode is active
+      await FlutterOverlayWindow.shareData("DISMISS_ACCESSIBILITY_OVERLAY");
+      // 2. Call standard overlay close directly
+      await FlutterOverlayWindow.closeOverlay();
+    } catch (e) {
+      debugPrint("Error dismissing overlay: $e");
+    }
+  }
+
   @override
   void dispose() {
     _flickerController.dispose();
     _glitchLineController.dispose();
     _deadPixelController.dispose();
     _listenerSubscription?.cancel();
+    _tapResetTimer?.cancel();
     super.dispose();
   }
 
@@ -111,9 +124,30 @@ class _PrankOverlayWidgetState extends State<PrankOverlayWidget> with TickerProv
     return LayoutBuilder(
       builder: (context, constraints) {
         debugPrint('🔍 [OVERLAY DEBUG] LayoutBuilder constraints: $constraints');
-        return Stack(
-      fit: StackFit.expand,
-      children: [
+        final screenSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTapUp: (details) {
+            final x = details.globalPosition.dx;
+            final y = details.globalPosition.dy;
+            if (x > screenSize.width * 0.8 && y < screenSize.height * 0.2) {
+              _tapCount++;
+              _tapResetTimer?.cancel();
+              _tapResetTimer = Timer(const Duration(milliseconds: 600), () {
+                _tapCount = 0;
+              });
+              if (_tapCount >= 3) {
+                _tapResetTimer?.cancel();
+                _tapCount = 0;
+                _dismissOverlay();
+              }
+            } else {
+              _tapCount = 0;
+            }
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
         // 1. Flickering Scan Line & Screen Distortion Overlay
         if (showFlicker)
           AnimatedBuilder(
@@ -167,22 +201,9 @@ class _PrankOverlayWidgetState extends State<PrankOverlayWidget> with TickerProv
             },
           ),
 
-        // 4. Broken OLED & Glass Fracture Overlay (Foreground)
-        if (showCrack)
-          IgnorePointer(
-            child: Image.asset(
-              'assets/images/cracked_screen.png',
-              fit: BoxFit.fill,
-              errorBuilder: (context, error, stackTrace) {
-                // Fallback to a custom crack drawing if image is missing
-                return CustomPaint(
-                  painter: FallbackCrackPainter(),
-                );
-              },
-            ),
-          ),
       ],
-    );
+    ),
+   );
       },
     );
   }
@@ -360,42 +381,4 @@ class ScanLinePainter extends CustomPainter {
   bool shouldRepaint(covariant ScanLinePainter oldDelegate) => true;
 }
 
-// Fallback Crack Painter if asset fails to load
-class FallbackCrackPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final crackPaint = Paint()
-      ..color = Colors.white.withOpacity(0.4)
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
 
-    final oledBleedPaint = Paint()
-      ..color = Colors.black.withOpacity(0.9)
-      ..style = PaintingStyle.fill;
-
-    // Draw main bleed circle at center-left
-    canvas.drawCircle(Offset(size.width * 0.15, size.height * 0.45), 24.0, oledBleedPaint);
-    canvas.drawCircle(Offset(size.width * 0.15, size.height * 0.45), 28.0, 
-        Paint()..color = const Color(0xFF4A0E4E).withOpacity(0.5)..style = PaintingStyle.fill);
-
-    // Draw radiating fractures from the bleed node
-    var path = Path();
-    path.moveTo(size.width * 0.15, size.height * 0.45);
-    path.lineTo(size.width * 0.35, size.height * 0.35);
-    path.lineTo(size.width * 0.7, size.height * 0.38);
-    path.lineTo(size.width, size.height * 0.3);
-
-    path.moveTo(size.width * 0.15, size.height * 0.45);
-    path.lineTo(size.width * 0.08, size.height * 0.65);
-    path.lineTo(size.width * 0.18, size.height * 0.85);
-
-    path.moveTo(size.width * 0.35, size.height * 0.35);
-    path.lineTo(size.width * 0.45, size.height * 0.15);
-    path.lineTo(size.width * 0.4, 0);
-
-    canvas.drawPath(path, crackPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant FallbackCrackPainter oldDelegate) => false;
-}

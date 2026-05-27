@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:screen_prank_app/decoy_screen.dart';
 import 'package:screen_prank_app/dashboard.dart';
 
 void main() {
@@ -8,21 +9,31 @@ void main() {
 
   const MethodChannel overlayChannel = MethodChannel('x-slayer/overlay_channel');
   const MethodChannel accessibilityChannel = MethodChannel('com.prank.screen/accessibility');
+  const MethodChannel platformChannel = SystemChannels.platform;
 
   final List<MethodCall> overlayChannelCalls = [];
   final List<MethodCall> accessibilityChannelCalls = [];
+  final List<MethodCall> platformChannelCalls = [];
 
-  // Start with permissions disabled to verify dynamic UI warnings
   bool isOverlayPermissionGranted = false;
   bool isOverlayActive = false;
   bool isAccessibilityEnabled = false;
   bool isAccessibilityOverlayActive = false;
 
+  // Track shared data messages
+  final List<dynamic> sharedDataMessages = [];
+
   setUp(() {
     overlayChannelCalls.clear();
     accessibilityChannelCalls.clear();
+    platformChannelCalls.clear();
+    sharedDataMessages.clear();
 
-    // Setup MethodChannel mock handler
+    isOverlayPermissionGranted = false;
+    isOverlayActive = false;
+    isAccessibilityEnabled = false;
+    isAccessibilityOverlayActive = false;
+
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(overlayChannel, (MethodCall methodCall) async {
       overlayChannelCalls.add(methodCall);
@@ -39,7 +50,7 @@ void main() {
           return null;
         case 'closeOverlay':
           isOverlayActive = false;
-          return true;
+          return null;
         default:
           return null;
       }
@@ -66,6 +77,21 @@ void main() {
           return null;
       }
     });
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(platformChannel, (MethodCall methodCall) async {
+      platformChannelCalls.add(methodCall);
+      return null;
+    });
+
+    // Mock BasicMessageChannel for shareData
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockDecodedMessageHandler(
+            const BasicMessageChannel("x-slayer/overlay_messenger", JSONMessageCodec()),
+            (message) async {
+              sharedDataMessages.add(message);
+              return null;
+            });
   });
 
   tearDown(() {
@@ -73,11 +99,17 @@ void main() {
         .setMockMethodCallHandler(overlayChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(accessibilityChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(platformChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockDecodedMessageHandler(
+            const BasicMessageChannel("x-slayer/overlay_messenger", JSONMessageCodec()),
+            null);
   });
 
-  testWidgets('Dashboard UI flows and platform channel verification', (WidgetTester tester) async {
+  testWidgets('Decoy Screen flows and hidden title-tap navigation to GlitchDeck', (WidgetTester tester) async {
     // Set virtual screen size to typical portrait mobile device dimensions
-    tester.view.physicalSize = const Size(1080, 3600);
+    tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 3.0;
     addTearDown(() {
       tester.view.resetPhysicalSize();
@@ -85,104 +117,174 @@ void main() {
     });
 
     await tester.pumpWidget(
-      const MaterialApp(
-        home: DashboardScreen(),
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            debugPrint("TEST LOGICAL SCREEN SIZE: ${MediaQuery.of(context).size}");
+            return const DecoyScreen();
+          },
+        ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
 
-    // 1. Verify header title and toggles render correctly
-    expect(find.text('SCREEN PRANK'), findsOneWidget);
-    expect(find.text('STANDARD MODE'), findsOneWidget);
-    expect(find.text('ADVANCED MODE'), findsOneWidget);
-    expect(find.text('OLED Crack & Ink Bleed'), findsOneWidget);
-    expect(find.text('Green OLED Lines'), findsOneWidget);
+    // 1. Verify Decoy screen title and elements render correctly
+    expect(find.text('DISPLAY CALIBRATOR'), findsOneWidget);
+    expect(find.text('SMPTE Color Bar Calibration Pattern'), findsOneWidget);
+    expect(find.text('AMOLED / OLED Active Matrix'), findsOneWidget);
 
-    // 2. Verify standard permission warning box is shown initially
-    expect(find.textContaining('Overlay permission is required'), findsOneWidget);
+    // 2. Perform 5 taps on the title to unlock the console
+    final titleFinder = find.text('DISPLAY CALIBRATOR');
+    for (int i = 0; i < 5; i++) {
+      await tester.tap(titleFinder);
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    // Wait for route transition animation to finish
+    await tester.pump(const Duration(milliseconds: 500));
 
-    // Tap GRANT PERMISSION (triggers mock settings grant)
-    await tester.tap(find.text('GRANT PERMISSION'));
-    await tester.pumpAndSettle();
+    // 3. Verify we have navigated to the secret GLITCHDECK dashboard
+    expect(find.text('GLITCHDECK'), findsOneWidget);
+    expect(find.text('GLITCH ENGINE PROTOCOL // v1.0.4'), findsOneWidget);
+
+    // 4. Verify initial permission warning box is shown (since disabled initially)
+    expect(find.textContaining('Draw-over permission required'), findsOneWidget);
+
+    // 5. Verify Phone Preview Mockup is rendered
+    expect(find.byType(PhonePreviewMockup), findsOneWidget);
+
+    // Tap GRANT ACCESS / AUTHORIZE SYSTEM DRAW button (triggers mock settings grant)
+    await tester.tap(find.text('AUTHORIZE SYSTEM DRAW'));
+    await tester.pump(const Duration(milliseconds: 500));
 
     // Verify warning banner disappears
-    expect(find.textContaining('Overlay permission is required'), findsNothing);
+    expect(find.textContaining('Draw-over permission required'), findsNothing);
 
-    // 3. Select instant delay (value 0)
-    await tester.tap(find.text('5 Seconds Delay'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Instant (Activate Now)').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Instant (Activate Now)'), findsOneWidget);
+    debugPrint("=== ACTIVE WIDGET TREE DUMP ===");
+    debugPrint(tester.binding.renderViewElement?.toStringDeep());
+    debugPrint("===============================");
 
-    // 4. Verify Standard Mode triggers standard overlay
+    // 6. Select delay option "3 Seconds Delay"
+    final dropdownFinder = find.byKey(const Key('delay_dropdown'));
+    await tester.drag(find.byType(ListView), const Offset(0, -400));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(dropdownFinder);
+    await tester.pump(const Duration(milliseconds: 500));
+    platformChannelCalls.clear();
+    await tester.tap(find.text('3 Seconds Delay').last);
+    await tester.pump(const Duration(milliseconds: 500));
+    // Verify selectionClick haptic is called when selecting dropdown option
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.selectionClick',
+      ),
+      isTrue,
+    );
+    expect(find.text('3 Seconds Delay'), findsOneWidget);
+
+    // 7. Verify Standard Mode triggers standard overlay showOverlay after delay
+    platformChannelCalls.clear();
     await tester.tap(find.byIcon(Icons.play_arrow));
-    await tester.pumpAndSettle();
+    await tester.pump(); // Start countdown
 
-    // Verify showOverlay method is called on platform channel
+    // Verify heavyImpact haptic on execute trigger
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.heavyImpact',
+      ),
+      isTrue,
+    );
+    platformChannelCalls.clear();
+
+    // Verify countdown ticks down
+    expect(find.text('DISRUPT IN: 3 SECONDS'), findsOneWidget);
+    expect(overlayChannelCalls.any((call) => call.method == 'showOverlay'), isFalse);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('DISRUPT IN: 2 SECONDS'), findsOneWidget);
+    // Verify tick vibrate
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == null,
+      ),
+      isTrue,
+    );
+    platformChannelCalls.clear();
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('DISRUPT IN: 1 SECONDS'), findsOneWidget);
+
+    // Final second tick launches overlay
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 500));
     expect(overlayChannelCalls.any((call) => call.method == 'showOverlay'), isTrue);
-    expect(find.text('STOP PRANK'), findsOneWidget);
+    expect(find.text('DISMISS GLITCH'), findsOneWidget);
 
-    // Tap STOP PRANK
-    await tester.tap(find.text('STOP PRANK'));
-    await tester.pumpAndSettle();
-
-    // Verify closeOverlay method is called
+    // Tap DISMISS GLITCH
+    platformChannelCalls.clear();
+    await tester.tap(find.text('DISMISS GLITCH'));
+    await tester.pump(const Duration(milliseconds: 500));
     expect(overlayChannelCalls.any((call) => call.method == 'closeOverlay'), isTrue);
+    // Verify selectionClick haptic is called when stopping prank
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.selectionClick',
+      ),
+      isTrue,
+    );
 
-    // 5. Switch to Advanced Mode
+    // 8. Test cancel countdown
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump();
+    expect(find.text('DISRUPT IN: 3 SECONDS'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('DISRUPT IN: 2 SECONDS'), findsOneWidget);
+
+    platformChannelCalls.clear();
+    await tester.tap(find.text('ABORT LAUNCH'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.textContaining('DISRUPT IN'), findsNothing);
+    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+    // Verify selectionClick haptic is called when aborting
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.selectionClick',
+      ),
+      isTrue,
+    );
+
+    // 9. Switch to Advanced Mode
+    platformChannelCalls.clear();
     await tester.tap(find.text('ADVANCED MODE'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
+    // Verify selectionClick haptic is called when switching modes
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.selectionClick',
+      ),
+      isTrue,
+    );
 
     // Verify accessibility permission warning is shown
-    expect(find.textContaining('Accessibility service permission is required'), findsOneWidget);
+    expect(find.textContaining('Accessibility permission required'), findsOneWidget);
 
-    // Tap ENABLE ACCESSIBILITY (triggers mock settings grant)
-    await tester.tap(find.text('ENABLE ACCESSIBILITY'));
-    await tester.pumpAndSettle();
+    // Tap GRANT ACCESS
+    platformChannelCalls.clear();
+    await tester.tap(find.text('GRANT ACCESS'));
+    await tester.pump(const Duration(milliseconds: 500));
+    // Verify mediumImpact haptic is called when requesting permission
+    expect(
+      platformChannelCalls.any(
+        (call) => call.method == 'HapticFeedback.vibrate' && call.arguments == 'HapticFeedbackType.mediumImpact',
+      ),
+      isTrue,
+    );
+    expect(find.textContaining('Accessibility permission required'), findsNothing);
 
-    // Verify warning banner disappears
-    expect(find.textContaining('Accessibility service permission is required'), findsNothing);
-
-    // Tap ACTIVATE PRANK in Advanced Mode
-    await tester.tap(find.byIcon(Icons.play_arrow));
-    await tester.pumpAndSettle();
-
-    // Verify startAccessibilityOverlay is called on custom channel
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isTrue);
-
-    // Verify arguments passed to accessibility service
-    final startCall = accessibilityChannelCalls.firstWhere((call) => call.method == 'startAccessibilityOverlay');
-    expect(startCall.arguments['crack'], isTrue);
-    expect(startCall.arguments['greenLines'], isTrue);
-
-    // Tap STOP PRANK in Advanced Mode
-    await tester.tap(find.text('STOP PRANK'));
-    await tester.pumpAndSettle();
-
-    // Verify stopAccessibilityOverlay is called
-    expect(accessibilityChannelCalls.any((call) => call.method == 'stopAccessibilityOverlay'), isTrue);
-
-    // ==========================================
-    // PART 3: Advanced Test Cases (Toggles, Countdown, and Cancel)
-    // ==========================================
-
-    // 1. Test Switch toggles state updates and configurations propagation
+    // 10. Test Switch toggles state updates
     accessibilityChannelCalls.clear();
 
-    // Find and toggle off "OLED Crack & Ink Bleed"
-    final crackSwitchRow = find.ancestor(
-      of: find.text('OLED Crack & Ink Bleed'),
-      matching: find.byType(Row),
-    );
-    final crackSwitch = find.descendant(
-      of: crackSwitchRow,
-      matching: find.byType(Switch),
-    );
-    await tester.tap(crackSwitch);
-    await tester.pumpAndSettle();
-
-    // Find and toggle off "Green OLED Lines"
+    // Toggle off "Green OLED Lines"
     final greenLinesSwitchRow = find.ancestor(
       of: find.text('Green OLED Lines'),
       matching: find.byType(Row),
@@ -192,88 +294,82 @@ void main() {
       matching: find.byType(Switch),
     );
     await tester.tap(greenLinesSwitch);
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
 
-    // Tap ACTIVATE PRANK in Advanced Mode with toggled settings
+    // Switch delay back to "Instant (Disrupt Now)"
+    final dropdownFinder2 = find.byKey(const Key('delay_dropdown'));
+    await tester.drag(find.byType(ListView), const Offset(0, -400));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(dropdownFinder2);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Instant (Disrupt Now)').last);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // Tap EXECUTE DISRUPTION
     await tester.tap(find.byIcon(Icons.play_arrow));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
 
-    // Verify startAccessibilityOverlay is called with crack: false and greenLines: false
+    // Verify startAccessibilityOverlay is called with config
     expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isTrue);
-    final customStartCall = accessibilityChannelCalls.firstWhere((call) => call.method == 'startAccessibilityOverlay');
-    expect(customStartCall.arguments['crack'], isFalse);
-    expect(customStartCall.arguments['greenLines'], isFalse);
-    expect(customStartCall.arguments['flicker'], isTrue);
-    expect(customStartCall.arguments['deadPixels'], isTrue);
+    final startCall = accessibilityChannelCalls.firstWhere((call) => call.method == 'startAccessibilityOverlay');
+    expect(startCall.arguments['greenLines'], isFalse);
+    expect(startCall.arguments['flicker'], isTrue);
+    expect(startCall.arguments['deadPixels'], isTrue);
 
-    // Tap STOP PRANK
-    await tester.tap(find.text('STOP PRANK'));
-    await tester.pumpAndSettle();
+    // Tap DISMISS GLITCH
+    await tester.tap(find.text('DISMISS GLITCH'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(accessibilityChannelCalls.any((call) => call.method == 'stopAccessibilityOverlay'), isTrue);
+  });
 
-    // Toggle them back on to restore defaults for the next test steps
-    await tester.tap(crackSwitch);
-    await tester.pumpAndSettle();
-    await tester.tap(greenLinesSwitch);
-    await tester.pumpAndSettle();
+  testWidgets('Part 6: App Lifecycle Permission State Syncing', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
 
-    // 2. Test Countdown delay timer ticking sequentially
-    // Select "3 Seconds Delay" from dropdown
-    await tester.tap(find.text('Instant (Activate Now)'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('3 Seconds Delay').last);
-    await tester.pumpAndSettle();
-    expect(find.text('3 Seconds Delay'), findsOneWidget);
+    isOverlayPermissionGranted = false;
+    isAccessibilityEnabled = false;
 
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DashboardScreen(),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 1. Verify warning box is shown initially
+    expect(find.textContaining('Draw-over permission required'), findsOneWidget);
+
+    // 2. Change permission mock to granted (as if user enabled it in system settings)
+    isOverlayPermissionGranted = true;
+
+    // 3. Trigger app lifecycle state change to resumed
+    overlayChannelCalls.clear();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 4. Verify checkPermission was invoked and warning banner is gone
+    expect(overlayChannelCalls.any((call) => call.method == 'checkPermission'), isTrue);
+    expect(find.textContaining('Draw-over permission required'), findsNothing);
+
+    // 5. Switch to Advanced Mode
+    await tester.tap(find.text('ADVANCED MODE'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.textContaining('Accessibility permission required'), findsOneWidget);
+
+    // 6. Change accessibility permission mock to enabled
+    isAccessibilityEnabled = true;
+
+    // 7. Trigger app lifecycle state change to resumed again
     accessibilityChannelCalls.clear();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 100));
 
-    // Tap ACTIVATE PRANK
-    await tester.tap(find.byIcon(Icons.play_arrow));
-    await tester.pump(); // Advance to start the countdown
-
-    // Verify countdown UI shows 3 seconds remaining and overlay not active
-    expect(find.text('Prank starts in: 3'), findsOneWidget);
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
-
-    // Pump 1 second -> 2 seconds remaining
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Prank starts in: 2'), findsOneWidget);
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
-
-    // Pump 1 second -> 1 second remaining
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Prank starts in: 1'), findsOneWidget);
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
-
-    // Pump 1 second -> Countdown finished, overlay should launch
-    await tester.pump(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isTrue);
-    expect(find.text('STOP PRANK'), findsOneWidget);
-
-    // Tap STOP PRANK
-    await tester.tap(find.text('STOP PRANK'));
-    await tester.pumpAndSettle();
-
-    // 3. Test Cancelling active countdown timer
-    accessibilityChannelCalls.clear();
-
-    // Tap ACTIVATE PRANK (starts countdown with the selected 3 seconds delay)
-    await tester.tap(find.byIcon(Icons.play_arrow));
-    await tester.pump();
-
-    expect(find.text('Prank starts in: 3'), findsOneWidget);
-
-    // Pump 1 second -> 2 seconds remaining
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Prank starts in: 2'), findsOneWidget);
-
-    // Tap CANCEL TIMER
-    await tester.tap(find.text('CANCEL TIMER'));
-    await tester.pumpAndSettle();
-
-    // Verify timer is canceled, UI returns to main controls, and overlay is not shown
-    expect(find.textContaining('Prank starts in'), findsNothing);
-    expect(accessibilityChannelCalls.any((call) => call.method == 'startAccessibilityOverlay'), isFalse);
-    expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+    // 8. Verify isAccessibilityEnabled was checked and warning banner is gone
+    expect(accessibilityChannelCalls.any((call) => call.method == 'isAccessibilityEnabled'), isTrue);
+    expect(find.textContaining('Accessibility permission required'), findsNothing);
   });
 }

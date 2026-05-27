@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dashboard.dart';
+import 'decoy_screen.dart';
 import 'overlay_widget.dart';
 
 // 1. Entry point for the overlay window background service
@@ -52,7 +52,7 @@ class ScreenPrankApp extends StatelessWidget {
         primaryColor: const Color(0xFF0F0E17),
         useMaterial3: true,
       ),
-      home: const DashboardScreen(),
+      home: const DecoyScreen(),
     );
   }
 }
